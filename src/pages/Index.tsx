@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Camera, CameraOff, Aperture } from "lucide-react";
@@ -8,6 +7,7 @@ const Index = () => {
   const [isCapturing, setIsCapturing] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [photoCount, setPhotoCount] = useState(0);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const prevImageDataRef = useRef<ImageData | null>(null);
@@ -17,52 +17,91 @@ const Index = () => {
   useEffect(() => {
     const initCamera = async () => {
       try {
-        // Improved camera constraints for mobile devices
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Media Devices API not supported in your browser");
+        }
+
+        // Reset error state
+        setCameraError(null);
+        
+        // iOS Safari works better with these constraints
         const constraints = {
+          audio: false,
           video: {
-            facingMode: "environment", // Use back camera on mobile
+            facingMode: "environment",
             width: { ideal: 1280 },
             height: { ideal: 720 }
-          },
-          audio: false
+          }
         };
         
+        console.log("Requesting media with constraints:", constraints);
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        console.log("Stream obtained:", stream.getVideoTracks()[0].label);
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           
-          // Add play event handler to ensure video is playing
+          // Important: Add both event handlers for better iOS compatibility
           videoRef.current.onloadedmetadata = () => {
+            console.log("Video metadata loaded");
             if (videoRef.current) {
-              videoRef.current.play()
-                .then(() => {
-                  console.log("Camera stream started successfully");
-                  setHasCameraPermission(true);
-                })
-                .catch(e => {
-                  console.error("Error playing video:", e);
-                  toast({
-                    title: "Kamera-Fehler",
-                    description: "Video konnte nicht abgespielt werden.",
-                    variant: "destructive"
+              console.log("Attempting to play video");
+              const playPromise = videoRef.current.play();
+              
+              if (playPromise !== undefined) {
+                playPromise
+                  .then(() => {
+                    console.log("Video playing successfully");
+                    setHasCameraPermission(true);
+                  })
+                  .catch(err => {
+                    console.error("Error playing video:", err);
+                    setCameraError("Video konnte nicht abgespielt werden. Bitte erlaube autoplay im Browser.");
+                    
+                    // On iOS, autoplay might be blocked, so we need user interaction
+                    toast({
+                      title: "Tippe auf den Bildschirm",
+                      description: "Um die Kamera zu starten, tippe bitte auf den Bildschirm.",
+                      variant: "default"
+                    });
                   });
-                });
+              }
             }
+          };
+          
+          // Additional event for iOS
+          videoRef.current.onplaying = () => {
+            console.log("Video is now playing");
+            setHasCameraPermission(true);
           };
         }
       } catch (error) {
         console.error("Error accessing camera:", error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        setCameraError(`Zugriff auf die Kamera nicht möglich: ${errorMsg}`);
+        
         toast({
           title: "Kamera-Fehler",
           description: "Zugriff auf die Kamera nicht möglich. Bitte erlaube den Kamerazugriff.",
           variant: "destructive"
         });
-        setHasCameraPermission(false);
       }
     };
 
     initCamera();
+
+    // Create a click event handler for the entire page
+    // This helps iOS Safari which might need user interaction to start video
+    const handleBodyClick = () => {
+      if (videoRef.current && videoRef.current.paused) {
+        console.log("Body clicked, attempting to play video");
+        videoRef.current.play()
+          .then(() => console.log("Video started after user interaction"))
+          .catch(err => console.error("Still couldn't play video:", err));
+      }
+    };
+
+    document.body.addEventListener('click', handleBodyClick);
 
     return () => {
       // Clean up video stream when component unmounts
@@ -70,6 +109,7 @@ const Index = () => {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
       }
+      document.body.removeEventListener('click', handleBodyClick);
     };
   }, []);
 
@@ -206,25 +246,60 @@ const Index = () => {
     setIsCapturing(!isCapturing);
   };
 
+  // Helper function to try playing video on user interaction
+  const tryPlayVideo = () => {
+    if (videoRef.current && (videoRef.current.paused || !hasCameraPermission)) {
+      console.log("Manual attempt to play video");
+      videoRef.current.play()
+        .then(() => {
+          console.log("Video started after manual interaction");
+          setHasCameraPermission(true);
+          setCameraError(null);
+        })
+        .catch(e => {
+          console.error("Manual play attempt failed:", e);
+          setCameraError("Kamera konnte nicht gestartet werden. Bitte prüfe die Berechtigungen.");
+        });
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-gray-100">
       {/* Camera preview */}
-      <div className="relative flex-1 bg-black overflow-hidden">
-        {hasCameraPermission ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full p-4">
+      <div 
+        className="relative flex-1 bg-black overflow-hidden" 
+        onClick={tryPlayVideo}
+      >
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="w-full h-full object-cover"
+        />
+        
+        {!hasCameraPermission && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-4">
             <CameraOff size={48} className="text-white opacity-50 mb-4" />
-            <p className="text-white text-center">Kein Kamerazugriff oder Kamera wird initialisiert...</p>
-            <p className="text-white text-sm mt-2 text-center opacity-70">
-              Falls das Bild schwarz bleibt, bitte prüfe deine Kameraeinstellungen oder lade die Seite neu.
+            <p className="text-white text-center">
+              {cameraError || "Kamera wird initialisiert..."}
             </p>
+            <p className="text-white text-sm mt-2 text-center opacity-70">
+              Falls das Bild schwarz bleibt:
+            </p>
+            <ul className="text-white text-sm opacity-70 list-disc pl-6 mt-1">
+              <li>Tippe auf den Bildschirm zum aktivieren</li>
+              <li>Erlaube den Kamerazugriff in den Einstellungen</li>
+              <li>Versuche Safari zu verwenden statt anderer Browser</li>
+              <li>Lade die Seite neu</li>
+            </ul>
+            <Button 
+              variant="default" 
+              className="mt-4 bg-white text-black hover:bg-gray-200"
+              onClick={tryPlayVideo}
+            >
+              Kamera starten
+            </Button>
           </div>
         )}
         
@@ -232,7 +307,7 @@ const Index = () => {
         <canvas ref={canvasRef} className="hidden" />
         
         {/* Photo counter */}
-        {isCapturing && (
+        {isCapturing && hasCameraPermission && (
           <div className="absolute top-4 right-4 bg-black/50 text-white px-3 py-1 rounded-full flex items-center gap-2">
             <Aperture size={16} />
             <span>{photoCount} Fotos</span>
