@@ -17,20 +17,40 @@ const Index = () => {
   useEffect(() => {
     const initCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        // Improved camera constraints for mobile devices
+        const constraints = {
           video: {
             facingMode: "environment", // Use back camera on mobile
             width: { ideal: 1280 },
             height: { ideal: 720 }
           },
           audio: false
-        });
+        };
+        
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          
+          // Add play event handler to ensure video is playing
+          videoRef.current.onloadedmetadata = () => {
+            if (videoRef.current) {
+              videoRef.current.play()
+                .then(() => {
+                  console.log("Camera stream started successfully");
+                  setHasCameraPermission(true);
+                })
+                .catch(e => {
+                  console.error("Error playing video:", e);
+                  toast({
+                    title: "Kamera-Fehler",
+                    description: "Video konnte nicht abgespielt werden.",
+                    variant: "destructive"
+                  });
+                });
+            }
+          };
         }
-        
-        setHasCameraPermission(true);
       } catch (error) {
         console.error("Error accessing camera:", error);
         toast({
@@ -199,9 +219,12 @@ const Index = () => {
             className="w-full h-full object-cover"
           />
         ) : (
-          <div className="flex items-center justify-center h-full">
-            <CameraOff size={48} className="text-white opacity-50" />
-            <p className="text-white mt-4">Kein Kamerazugriff</p>
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            <CameraOff size={48} className="text-white opacity-50 mb-4" />
+            <p className="text-white text-center">Kein Kamerazugriff oder Kamera wird initialisiert...</p>
+            <p className="text-white text-sm mt-2 text-center opacity-70">
+              Falls das Bild schwarz bleibt, bitte prüfe deine Kameraeinstellungen oder lade die Seite neu.
+            </p>
           </div>
         )}
         
