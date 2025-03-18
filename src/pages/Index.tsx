@@ -1,7 +1,10 @@
+
 import React, { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Camera, CameraOff, Aperture } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 
 const Index = () => {
   const [isCapturing, setIsCapturing] = useState(false);
@@ -12,6 +15,7 @@ const Index = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const prevImageDataRef = useRef<ImageData | null>(null);
   const captureIntervalRef = useRef<number | null>(null);
+  const isNative = Capacitor.isNativePlatform();
 
   // Request camera permission and initialize
   useEffect(() => {
@@ -183,14 +187,46 @@ const Index = () => {
     }
   };
 
-  // Save photo to user's device (browser download in this case)
-  const savePhoto = (canvas: HTMLCanvasElement) => {
+  // Save photo to user's device
+  const savePhoto = async (canvas: HTMLCanvasElement) => {
     try {
-      // Convert canvas to blob and create a download link
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        
-        // Create object URL
+      // Convert canvas to blob or base64
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      
+      if (isNative) {
+        // On native platforms (iOS/Android), save to filesystem
+        try {
+          const fileName = `photo-sequence-${Date.now()}.jpg`;
+          const base64Data = dataUrl.split(',')[1];
+          
+          // Write the file to the filesystem first
+          await Filesystem.writeFile({
+            path: fileName,
+            data: base64Data,
+            directory: Directory.Cache
+          });
+          
+          // Now move it to the gallery
+          const fileUri = await Filesystem.getUri({
+            directory: Directory.Cache,
+            path: fileName
+          });
+          
+          // Save to photo gallery would happen here
+          // This would require Capacitor's Photos plugin
+          // For now we'll just save it to the filesystem
+          
+          toast({
+            title: "Foto gespeichert",
+            description: `Foto ${photoCount + 1} wurde auf dem Gerät gespeichert.`,
+          });
+        } catch (err) {
+          console.error("Error saving to filesystem:", err);
+          throw err;
+        }
+      } else {
+        // For web browser, use the download approach
+        const blob = await (await fetch(dataUrl)).blob();
         const url = URL.createObjectURL(blob);
         
         // Create and trigger download
@@ -206,7 +242,7 @@ const Index = () => {
           title: "Foto gespeichert",
           description: `Foto ${photoCount + 1} wurde gespeichert.`,
         });
-      }, 'image/jpeg', 0.9);
+      }
     } catch (error) {
       console.error("Error saving photo:", error);
       toast({
